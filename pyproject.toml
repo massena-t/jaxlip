@@ -43,11 +43,7 @@ Repository = "https://github.com/username/jaxlip"
 Issues = "https://github.com/username/jaxlip/issues"
 
 [tool.setuptools]
-packages = { find = {} }
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["jaxlip*"]
+packages = { find = { where = ["."] , include = ["jaxlip*"] } }
 
 [tool.ruff]
 line-length = 88
