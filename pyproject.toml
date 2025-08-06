@@ -42,12 +42,12 @@ Homepage = "https://github.com/username/jaxlip"
 Repository = "https://github.com/username/jaxlip"
 Issues = "https://github.com/username/jaxlip/issues"
 
+[tool.setuptools]
+packages = { find = {} }
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["jaxlip*"]
-
-[tool.setuptools]
-packages = ["jaxlip"]
 
 [tool.ruff]
 line-length = 88
