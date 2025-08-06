@@ -8,11 +8,10 @@ version = "0.1.0"
 description = "Lipschitz Neural Networks in JAX with Flax NNX"
 readme = "README.md"
 authors = [{name = "JaxLip Contributors"}]
-license = {text = "MIT"}
+license = "MIT"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -46,9 +45,6 @@ Issues = "https://github.com/username/jaxlip/issues"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["jaxlip*"]
-
-[tool.setuptools.package-dir]
-jaxlip = "src"
 
 [tool.ruff]
 line-length = 88
