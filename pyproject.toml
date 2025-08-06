@@ -46,6 +46,9 @@ Issues = "https://github.com/username/jaxlip/issues"
 where = ["."]
 include = ["jaxlip*"]
 
+[tool.setuptools]
+packages = ["jaxlip"]
+
 [tool.ruff]
 line-length = 88
 target-version = "py39"
