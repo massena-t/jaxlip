@@ -18,6 +18,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+lin_layer = OrthoLinear
+# lin_layer = SpectralLinear
 
 class PatchEmbedding(nnx.Module):
     """Convert an (H, W, C) image into a sequence of patch embeddings.
@@ -41,7 +43,7 @@ class PatchEmbedding(nnx.Module):
 
         flat_patch_dim = patch_size * patch_size * in_channels  # (P·P·C)
         # Explicitly specify in/out feature sizes (no shape inference)
-        self.proj = OrthoLinear(
+        self.proj = lin_layer(
             din=flat_patch_dim,
             dout=hidden_dim,
             rngs=rngs,
@@ -86,9 +88,9 @@ class MLP(nnx.Module):
         out_features: int,
         rngs: nnx.Rngs,
     ):
-        self.fc1 = OrthoLinear(din=in_features, dout=hidden_features, rngs=rngs)
+        self.fc1 = lin_layer(din=in_features, dout=hidden_features, rngs=rngs)
         self.act = GroupSort2()
-        self.fc2 = OrthoLinear(din=hidden_features, dout=out_features, rngs=rngs)
+        self.fc2 = lin_layer(din=hidden_features, dout=out_features, rngs=rngs)
         self.bc = BatchCentering(out_features)
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -216,7 +218,7 @@ class MLPMixer(nnx.Module):
             self.mixer_blocks.append(block)
 
         self.norm = LayerCentering()
-        self.head = OrthoLinear(din=hidden_dim, dout=num_classes, rngs=rngs)
+        self.head = lin_layer(din=hidden_dim, dout=num_classes, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:  # (B, H, W, C)
         lipconstant = 1.0
