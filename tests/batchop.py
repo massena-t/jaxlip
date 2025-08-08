@@ -49,7 +49,7 @@ class TestBatchCentering(unittest.TestCase):
 
         # Since all rows are identical, centering should zero them (bias is zero)
         self._close(
-            out, jnp.zeros_like(a), msg="Initial centering failed for identical input"
+            out, a - 0.1 * a, msg="Initial centering failed for identical input"
         )
         self.assertEqual(a.shape, out.shape)
 
@@ -100,7 +100,7 @@ class TestBatchCentering(unittest.TestCase):
         # Identical per-channel values => centering subtracts the per-channel mean, yielding zeros
         self.assertEqual(out.shape, a.shape)
         self._close(
-            out, jnp.zeros_like(a), msg="Initial centering failed for identical input"
+            out, a - 0.1 * a, msg="Initial centering failed for identical input"
         )
 
         # Mean should be per-channel (C,)
@@ -153,152 +153,108 @@ class TestLayerCentering(unittest.TestCase):
                 f"diff:\n{diff}"
             )
 
-    def test_1d_default_reduction(self):
-        # Default reduction_axes=-1 (last axis)
+    def test_default_reduction_axes(self):
         layer = LayerCentering()
 
-        a = jnp.array(
+        # Test with 2D input (batch, features)
+        x = jnp.array(
             [
-                [3, 2, 1],
-                [6, 4, 2],
-                [9, 6, 3],
-            ]
-        )  # shape (3,3)
-
-        # Training mode: EMA should track mean over reduction axes
-        layer.use_running_average = False
-        out = layer(a)
-
-        # For reduction_axes=-1, mean is computed per row, then subtracted
-        # Row means: [2, 4, 6], so expected output is a - [[2],[4],[6]]
-        expected = a - jnp.mean(a, axis=-1, keepdims=True)
-        self._close(
-            out, expected, msg="Initial centering failed with default reduction"
-        )
-        self.assertEqual(a.shape, out.shape)
-
-        # Check that running mean has correct shape (keeps dims from keepdims=True)
-        self.assertEqual(layer.mean.shape, (a.shape[0], 1))
-
-        # Run many times to stabilize EMA
-        for _ in range(1000):
-            _ = layer(a)
-
-        # Capture stabilized mean and switch to eval
-        mean_val = layer.mean
-        layer.use_running_average = True
-
-        # In eval, output should be a - stored_mean
-        expected_eval = a - mean_val
-        actual_eval = layer(a)
-        self._close(actual_eval, expected_eval, msg="Eval-mode centering mismatch")
-
-        # New input with different values
-        b = jnp.array(
-            [
-                [1, 2, 3],
-                [4, 5, 6],
-                [7, 8, 9],
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
             ]
         )
-        expected_b = b - mean_val
-        actual_b = layer(b)
-        self._close(actual_b, expected_b, msg="Centering failed for second input")
 
-    def test_2d_batch_reduction(self):
-        # Test with reduction_axes=0 (batch axis)
+        out = layer(x)
+
+        # Default reduction_axes=-1 means centering along last axis (features)
+        # Each row should be centered around its mean
+        expected = x - jnp.mean(x, axis=-1, keepdims=True)
+        self._close(out, expected, msg="Default reduction axes centering failed")
+        self.assertEqual(out.shape, x.shape)
+
+    def test_specific_reduction_axes(self):
         layer = LayerCentering(reduction_axes=0)
 
-        # Create input where batch mean is easy to compute
-        a = jnp.array(
+        x = jnp.array(
             [
-                [[1, 2], [3, 4]],
-                [[5, 6], [7, 8]],
-                [[9, 10], [11, 12]],
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
             ]
-        )  # shape (3,2,2)
-
-        layer.use_running_average = False
-        out = layer(a)
-
-        # Mean over axis 0: [[5,6], [7,8]]
-        expected = a - jnp.mean(a, axis=0, keepdims=True)
-        self._close(out, expected, msg="Batch reduction centering failed")
-        self.assertEqual(a.shape, out.shape)
-
-        # Check mean shape with keepdims
-        self.assertEqual(layer.mean.shape, (1, a.shape[1], a.shape[2]))
-
-        # Stabilize EMA
-        for _ in range(1000):
-            _ = layer(a)
-
-        mean_val = layer.mean
-        layer.use_running_average = True
-
-        # Test eval mode
-        expected_eval = a - mean_val
-        actual_eval = layer(a)
-        self._close(
-            actual_eval, expected_eval, msg="Eval-mode batch centering mismatch"
         )
+
+        out = layer(x)
+
+        # reduction_axes=0 means centering along axis 0 (batch)
+        expected = x - jnp.mean(x, axis=0, keepdims=True)
+        self._close(out, expected, msg="Specific reduction axes centering failed")
+        self.assertEqual(out.shape, x.shape)
 
     def test_multiple_reduction_axes(self):
-        # Test with reduction_axes=(0,2)
-        layer = LayerCentering(reduction_axes=(0, 2))
+        layer = LayerCentering(reduction_axes=(0, 1))
 
-        a = jnp.array(
+        # 3D input: batch, height, width
+        x = jnp.array(
             [
-                [[1, 2, 3], [4, 5, 6]],
-                [[7, 8, 9], [10, 11, 12]],
+                [[1.0, 2.0], [3.0, 4.0]],
+                [[5.0, 6.0], [7.0, 8.0]],
             ]
-        )  # shape (2,2,3)
-
-        layer.use_running_average = False
-        out = layer(a)
-
-        # Mean over axes (0,2): shape should be (1,2,1) due to keepdims
-        expected = a - jnp.mean(a, axis=(0, 2), keepdims=True)
-        self._close(out, expected, msg="Multiple axes reduction failed")
-        self.assertEqual(a.shape, out.shape)
-
-        # Check mean shape
-        self.assertEqual(layer.mean.shape, (1, a.shape[1], 1))
-
-        # Test stability and eval mode
-        for _ in range(1000):
-            _ = layer(a)
-
-        mean_val = layer.mean
-        layer.use_running_average = True
-
-        expected_eval = a - mean_val
-        actual_eval = layer(a)
-        self._close(
-            actual_eval, expected_eval, msg="Multi-axis eval centering mismatch"
         )
 
-    def test_momentum_update(self):
-        # Test that momentum parameter affects EMA updates
-        layer = LayerCentering(momentum=0.5)  # Lower momentum = faster updates
+        out = layer(x)
 
-        a = jnp.array([[1.0, 2.0, 3.0]])
-        b = jnp.array([[10.0, 20.0, 30.0]])
+        # Centering along axes (0, 1)
+        expected = x - jnp.mean(x, axis=(0, 1), keepdims=True)
+        self._close(out, expected, msg="Multiple reduction axes centering failed")
+        self.assertEqual(out.shape, x.shape)
 
-        layer.use_running_average = False
+    def test_dtype_conversion(self):
+        layer = LayerCentering(dtype=jnp.float16)
 
-        # First pass with 'a'
-        _ = layer(a)
-        mean_after_a = layer.mean.copy()
+        x = jnp.array(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+            ],
+            dtype=jnp.float32,
+        )
 
-        # Second pass with 'b' - should update mean significantly with momentum=0.5
-        _ = layer(b)
-        mean_after_b = layer.mean.copy()
+        out = layer(x)
 
-        # Check that mean moved substantially toward b's mean
-        b_mean = jnp.mean(b, axis=-1, keepdims=True)
-        expected_update = 0.5 * mean_after_a + 0.5 * b_mean
-        self._close(mean_after_b, expected_update, msg="Momentum update failed")
+        # Mean should be converted to float16
+        mean = jnp.mean(x, axis=-1, keepdims=True).astype(jnp.float16)
+        expected = x - mean
+        self._close(out, expected, msg="Dtype conversion centering failed")
+        self.assertEqual(out.shape, x.shape)
+
+    def test_negative_axes(self):
+        layer = LayerCentering(reduction_axes=-2)
+
+        # 3D input
+        x = jnp.array(
+            [
+                [[1.0, 2.0], [3.0, 4.0]],
+                [[5.0, 6.0], [7.0, 8.0]],
+            ]
+        )
+
+        out = layer(x)
+
+        # -2 should be converted to axis 1 for 3D input
+        expected = x - jnp.mean(x, axis=1, keepdims=True)
+        self._close(out, expected, msg="Negative axes centering failed")
+        self.assertEqual(out.shape, x.shape)
+
+    def test_1d_input(self):
+        layer = LayerCentering()
+
+        x = jnp.array([1.0, 2.0, 3.0, 4.0])
+
+        out = layer(x)
+
+        # For 1D input with default reduction_axes=-1, center around global mean
+        expected = x - jnp.mean(x, axis=-1, keepdims=True)
+        self._close(out, expected, msg="1D input centering failed")
+        self.assertEqual(out.shape, x.shape)
 
 
 if __name__ == "__main__":

@@ -66,7 +66,7 @@ class SpectralLinear(nnx.Module):
         """
         key = rngs.params()
         self.w = nnx.Param(orthogonal()(key, (din, dout)))
-        self.cache = jax.random.uniform(key, (din, dout))
+        self.cache = nnx.Cache(jax.random.uniform(key, (din, dout)), collection="cache")
 
         self.bias = bias
 
@@ -83,7 +83,7 @@ class SpectralLinear(nnx.Module):
         Subsequent forward passes will use the cached weights instead of recomputing the normalization.
         This is particularly useful during evaluation when weights are frozen.
         """
-        self.cache = l2_normalize(self.w)
+        self.cache.value = l2_normalize(self.w)
         self.cached = True
         pass
 
@@ -113,7 +113,7 @@ class SpectralLinear(nnx.Module):
         if not self.cached:
             y = x @ l2_normalize(self.w)
         else:
-            y = x @ self.cache
+            y = x @ self.cache.value
         return y + self.b if self.bias else y
 
 
@@ -156,6 +156,7 @@ class OrthoLinear(nnx.Module):
         """
         key = rngs.params()
         self.w = nnx.Param(orthogonal()(key, (din, dout)))
+        self.cache = nnx.Cache(jax.random.uniform(key, (din, dout)), collection="cache")
 
         self.bias = bias
 
@@ -172,7 +173,7 @@ class OrthoLinear(nnx.Module):
         and stores them in the cache. Subsequent forward passes will use the cached weights
         instead of recomputing the orthogonalization.
         """
-        self.cache = orthogonalize(self.w)
+        self.cache.value = orthogonalize(self.w)
         self.cached = True
         pass
 
@@ -204,5 +205,5 @@ class OrthoLinear(nnx.Module):
             w_orth = orthogonalize(self.w)
             y = x @ w_orth
         else:
-            y = x @ self.cache
+            y = x @ self.cache.value
         return y + self.b if self.bias else y

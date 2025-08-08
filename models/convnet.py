@@ -103,16 +103,20 @@ class ConvNet(nnx.Module):
             dout=num_classes,
             rngs=rngs,
         )
-        self.mean = jnp.array(mean)
-        self.std = jnp.array(std)
+        self.mean = (
+            nnx.Cache(jnp.array(mean))
+            if mean is not None
+            else nnx.Cache(jnp.array(0.0))
+        )
+        self.std = (
+            nnx.Cache(jnp.array(std)) if std is not None else nnx.Cache(jnp.array(1.0))
+        )
 
     def __call__(self, x):
         lipconstant = 1.0
-        if self.mean is not None:
-            x = x - jnp.expand_dims(self.mean, axis=(0, 1, 2))
-        if self.std is not None:
-            x = x / jnp.expand_dims(self.std, axis=(0, 1, 2))
-            lipconstant *= 1 / jnp.min(self.std)
+        x = x - jnp.expand_dims(self.mean, axis=(0, 1, 2))
+        x = x / jnp.expand_dims(self.std, axis=(0, 1, 2))
+        lipconstant *= 1 / jnp.min(self.std)
         x = self.conv(x)
         x = einops.rearrange(x, "b h w c -> b (h w c)")
         x = self.head(x)

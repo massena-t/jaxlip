@@ -21,6 +21,7 @@ from flax import nnx
 lin_layer = OrthoLinear
 # lin_layer = SpectralLinear
 
+
 class PatchEmbedding(nnx.Module):
     """Convert an (H, W, C) image into a sequence of patch embeddings.
 
@@ -194,8 +195,14 @@ class MLPMixer(nnx.Module):
             "image_size must be divisible by patch_size"
         )
         num_patches = (image_size // patch_size) ** 2  # N
-        self.mean = jnp.array(mean) if mean is not None else None
-        self.std = jnp.array(std) if std is not None else None
+        self.mean = (
+            nnx.Cache(jnp.array(mean))
+            if mean is not None
+            else nnx.Cache(jnp.array(0.0))
+        )
+        self.std = (
+            nnx.Cache(jnp.array(std)) if std is not None else nnx.Cache(jnp.array(1.0))
+        )
 
         self.patch_embed = PatchEmbedding(
             patch_size=patch_size,
@@ -222,11 +229,9 @@ class MLPMixer(nnx.Module):
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:  # (B, H, W, C)
         lipconstant = 1.0
-        if self.mean is not None:
-            x = x - jnp.expand_dims(self.mean, axis=(0, 1, 2))
-        if self.std is not None:
-            x = x / jnp.expand_dims(self.std, axis=(0, 1, 2))
-            lipconstant = lipconstant * 1 / jnp.min(self.std)
+        x = x - jnp.expand_dims(self.mean.value, axis=(0, 1, 2))
+        x = x / jnp.expand_dims(self.std.value, axis=(0, 1, 2))
+        lipconstant = lipconstant * 1 / jnp.min(self.std)
 
         x = self.patch_embed(x)  # (B, N, D)
         for block in self.mixer_blocks:

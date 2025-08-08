@@ -49,7 +49,7 @@ class SpectralConv2d(nnx.Module):
         # weight shape: [out_features, in_features, kh, kw]
         w_shape = (out_features, in_features, kh, kw)
         self.w = nnx.Param(orthogonal()(w_key, w_shape))
-        self.cache = jax.random.uniform(w_key, w_shape)
+        self.cache = nnx.Cache(jax.random.uniform(w_key, w_shape), collection="cache")
 
         self.bias = bias
 
@@ -60,15 +60,21 @@ class SpectralConv2d(nnx.Module):
         cout, cin, h, w = K.shape
         key, k1, k2, k3 = random.split(key, 4)
 
-        self.u1 = random.normal(k1, (cout, 1, 1, 1), dtype=jnp.complex64)
-        self.u2 = random.normal(k2, (1, cin, 1, 1), dtype=jnp.complex64)
-        self.u3 = random.normal(k3, (1, 1, h, 1), dtype=jnp.complex64)
+        self.u1 = nnx.Cache(
+            random.normal(k1, (cout, 1, 1, 1), dtype=jnp.complex64), collection="pi_u1"
+        )
+        self.u2 = nnx.Cache(
+            random.normal(k2, (1, cin, 1, 1), dtype=jnp.complex64), collection="pi_u2"
+        )
+        self.u3 = nnx.Cache(
+            random.normal(k3, (1, 1, h, 1), dtype=jnp.complex64), collection="pi_u3"
+        )
 
         self.stride = strides
         self.padding = padding
         self.in_features = in_features
         self.out_features = out_features
-        self.key = key
+        self.key = nnx.Cache(key, collection="cache_key")
         self.num_iters_train = num_iters_train
         self.num_iters_eval = num_iters_eval
         self.detach_iter = detach_iter
@@ -76,25 +82,25 @@ class SpectralConv2d(nnx.Module):
         self.deterministic = False
 
         # Initialize w, u1, u2, u3 properly
-        sigma, self.u1, self.u2, self.u3 = tensor_norm(
+        sigma, self.u1.value, self.u2.value, self.u3.value = tensor_norm(
             self.w,
-            self.u1,
-            self.u2,
-            self.u3,
+            self.u1.value,
+            self.u2.value,
+            self.u3.value,
             num_iters=500,
             s=self.stride,
         )
 
     def _cache_params(self):
-        sigma, self.u1, self.u2, self.u3 = tensor_norm(
+        sigma, self.u1.value, self.u2.value, self.u3.value = tensor_norm(
             self.w,
-            self.u1,
-            self.u2,
-            self.u3,
+            self.u1.value,
+            self.u2.value,
+            self.u3.value,
             num_iters=self.num_iters_eval,
             s=self.stride,
         )
-        self.cache = self.w / sigma
+        self.cache.value = self.w / sigma
         self.cached = True
 
     def _uncache(self):
@@ -110,18 +116,18 @@ class SpectralConv2d(nnx.Module):
             num_iters = (
                 self.num_iters_eval if self.deterministic else self.num_iters_train
             )
-            sigma, self.u1, self.u2, self.u3 = tensor_norm(
+            sigma, self.u1.value, self.u2.value, self.u3.value = tensor_norm(
                 self.w,
-                self.u1,
-                self.u2,
-                self.u3,
+                self.u1.value,
+                self.u2.value,
+                self.u3.value,
                 num_iters=num_iters,
                 detach_iter=self.detach_iter,
                 s=self.stride,
             )
             kernel = self.w / sigma
         else:
-            kernel = self.cache
+            kernel = self.cache.value
 
         y = jax.lax.conv_general_dilated(
             lhs=x,
@@ -186,7 +192,7 @@ class AOLConv2d(nnx.Module):
         # weight shape: [out_features, in_features, kh, kw]
         w_shape = (out_features, in_features, kh, kw)
         self.w = nnx.Param(orthogonal()(w_key, w_shape))
-        self.cache = jax.random.uniform(w_key, w_shape)
+        self.cache = nnx.Cache(jax.random.uniform(w_key, w_shape), collection="cache")
 
         self.bias = bias
 
@@ -197,15 +203,21 @@ class AOLConv2d(nnx.Module):
         cout, cin, h, w = K.shape
         key, k1, k2, k3 = random.split(key, 4)
 
-        self.u1 = random.normal(k1, (cout, 1, 1, 1), dtype=jnp.complex64)
-        self.u2 = random.normal(k2, (1, cin, 1, 1), dtype=jnp.complex64)
-        self.u3 = random.normal(k3, (1, 1, h, 1), dtype=jnp.complex64)
+        self.u1 = nnx.Cache(
+            random.normal(k1, (cout, 1, 1, 1), dtype=jnp.complex64), collection="pi_u1"
+        )
+        self.u2 = nnx.Cache(
+            random.normal(k2, (1, cin, 1, 1), dtype=jnp.complex64), collection="pi_u2"
+        )
+        self.u3 = nnx.Cache(
+            random.normal(k3, (1, 1, h, 1), dtype=jnp.complex64), collection="pi_u3"
+        )
 
         self.stride = strides
         self.padding = padding
         self.in_features = in_features
         self.out_features = out_features
-        self.key = key
+        self.key = nnx.Cache(key, collection="cache_key")
         self.num_iters_train = num_iters_train
         self.num_iters_eval = num_iters_eval
         self.cached = False
@@ -214,11 +226,11 @@ class AOLConv2d(nnx.Module):
 
         # Initialize u1, u2, u3 properly
         kernel = aol_conv2d_rescale(self.w)
-        sigma, self.u1, self.u2, self.u3 = tensor_norm(
+        sigma, self.u1.value, self.u2.value, self.u3.value = tensor_norm(
             kernel,
-            self.u1,
-            self.u2,
-            self.u3,
+            self.u1.value,
+            self.u2.value,
+            self.u3.value,
             num_iters=500,
             s=self.stride,
         )
@@ -229,16 +241,16 @@ class AOLConv2d(nnx.Module):
             num_iters = (
                 self.num_iters_eval if self.deterministic else self.num_iters_train
             )
-            sigma, self.u1, self.u2, self.u3 = tensor_norm(
+            sigma, self.u1.value, self.u2.value, self.u3.value = tensor_norm(
                 kernel,
-                self.u1,
-                self.u2,
-                self.u3,
+                self.u1.value,
+                self.u2.value,
+                self.u3.value,
                 num_iters=num_iters,
                 s=self.stride,
             )
             kernel /= sigma
-        self.cache = kernel
+        self.cache.value = kernel
         self.cached = True
 
     def _uncache(self):
@@ -256,18 +268,18 @@ class AOLConv2d(nnx.Module):
                 num_iters = (
                     self.num_iters_eval if self.deterministic else self.num_iters_train
                 )
-                sigma, self.u1, self.u2, self.u3 = tensor_norm(
+                sigma, self.u1.value, self.u2.value, self.u3.value = tensor_norm(
                     kernel,
-                    self.u1,
-                    self.u2,
-                    self.u3,
+                    self.u1.value,
+                    self.u2.value,
+                    self.u3.value,
                     num_iters=num_iters,
                     detach_iter=self.detach_iter,
                     s=self.stride,
                 )
                 kernel /= sigma
         else:
-            kernel = self.cache
+            kernel = self.cache.value
 
         y = jax.lax.conv_general_dilated(
             lhs=x,

@@ -43,13 +43,13 @@ def parse_args():
     parser.add_argument(
         "--detach_iter",
         type=int,
-        default=20,
+        default=25,
         help="Nb of TN iterations during training",
     )
     parser.add_argument(
         "--num_iters_train",
         type=int,
-        default=50,
+        default=60,
         help="Nb of TN iterations during training",
     )
     parser.add_argument(
@@ -68,7 +68,7 @@ def parse_args():
     parser.add_argument(
         "--loss_fn",
         type=str,
-        default="hkr",
+        default="tau_cce",
         choices=["hkr", "xent", "tau_cce"],
         help="Loss function to use",
     )
@@ -178,27 +178,6 @@ def main(args):
         print(f"\t Val acc: {100 * val_acc:.3f}%, CRA: {100 * val_cra:.3f}%\n")
         print("")
 
-
-# Example gradient rescaling:
-# gamma = 1e-1
-# def rescaling(path, grad):
-#     if grad.ndim != 4:
-#         return grad
-#     else:
-#         return grad / (
-#             jnp.linalg.norm(grad.reshape(-1), ord=2) + gamma
-#         )
-# @nnx.jit
-# def train_step(model, optimizer, x, y, rescale_grads=True):
-#     def loss_fn(m):
-#         logits = m(x)
-#         return chosen_loss(logits, y)
-#
-#     loss, grads = nnx.value_and_grad(loss_fn)(model)
-#     if rescale_grads:
-#         grads = tree_map_with_path(rescaling, grads)
-#     optimizer.update(grads)
-#     return loss
 
 if __name__ == "__main__":
     args = parse_args()

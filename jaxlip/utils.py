@@ -40,7 +40,6 @@ def cache_model_params(root: nnx.Module, verbose: bool = True) -> None:
             (
                 BatchCentering2d,
                 BatchCentering,
-                LayerCentering,
             ),
         ):
             mod.use_running_average = True
@@ -92,7 +91,6 @@ def uncache_model_params(root: nnx.Module) -> None:
             (
                 BatchCentering2d,
                 BatchCentering,
-                LayerCentering,
             ),
         ):
             mod.use_running_average = False

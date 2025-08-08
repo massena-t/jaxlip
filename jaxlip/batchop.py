@@ -23,8 +23,7 @@ class BatchCentering(nnx.Module):
     ):
         feature_shape = (num_features,)
         # running mean state
-        # self.mean = nnx.BatchStat(jnp.zeros(feature_shape, jnp.float32))
-        self.mean = None
+        self.mean = nnx.BatchStat(jnp.zeros(feature_shape, jnp.float32))
         # bias parameter
         self.bias = nnx.Param(jnp.zeros(feature_shape, jnp.float32))
         self.use_running_average = use_running_average
@@ -46,15 +45,11 @@ class BatchCentering(nnx.Module):
         if self.use_running_average:
             mean = self.mean
         else:
-            # compute current batch mean
             curr_mean = jnp.mean(x, axis=reduction_axes)
-            if self.mean is None:
-                self.mean = curr_mean
-            else:
-                self.mean = (
-                    self.momentum * self.mean + (1.0 - self.momentum) * curr_mean
-                )
-            mean = self.mean
+            self.mean.value = (
+                self.momentum * self.mean.value + (1.0 - self.momentum) * curr_mean
+            )
+            mean = self.mean.value
 
         # reshape mean and bias for broadcasting
         stats_shape = [1] * x.ndim
@@ -62,17 +57,10 @@ class BatchCentering(nnx.Module):
             stats_shape[ax] = x.shape[ax]
         mean = mean.reshape(stats_shape)
         bias = self.bias.reshape(stats_shape)
-
-        # apply centering + bias
         return x - mean + bias
 
 
 class BatchCentering2d(nnx.Module):
-    """
-    NHWC version: subtract per-channel mean (computed over N,H,W) with EMA,
-    optionally add a learnable bias.  No variance scaling.
-    """
-
     def __init__(
         self,
         num_channels: int,
@@ -81,36 +69,30 @@ class BatchCentering2d(nnx.Module):
         momentum: float = 0.9,
     ):
         channel_shape = (num_channels,)
-        # running mean per channel
-        # self.mean = nnx.BatchStat(jnp.zeros(channel_shape, jnp.float32))
-        self.mean = None
-        # bias (the “beta” in BatchNorm)
+        self.mean = nnx.BatchStat(
+            jnp.zeros(channel_shape, jnp.float32), collection="batch_stats"
+        )
         self.bias = nnx.Param(jnp.zeros(channel_shape, jnp.float32))
         self.use_running_average = use_running_average
         self.momentum = momentum
-        self.num_channels = num_channels
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         # Expect NHWC: channels last
         # Reduction over N, H, W to get per-channel mean
         reduction_axes = tuple(i for i in range(x.ndim) if i != (x.ndim - 1))
-
         if self.use_running_average:
-            mean = self.mean  # shape (C,)
+            mean = self.mean.value
         else:
-            curr_mean = jnp.mean(x, axis=reduction_axes)  # shape (C,)
-            if self.mean is None:
-                self.mean = curr_mean
-            else:
-                self.mean = (
-                    self.momentum * self.mean + (1.0 - self.momentum) * curr_mean
-                )
+            curr_mean = jnp.mean(x, axis=reduction_axes)
+            self.mean.value = (
+                self.momentum * self.mean.value + (1.0 - self.momentum) * curr_mean
+            )
+            mean = self.mean.value
 
-        # reshape for broadcasting to NHWC: (1,1,1,C)
-        mean_broadcast = self.mean.reshape((1,) * (x.ndim - 1) + (x.shape[-1],))
-        bias_broadcast = self.bias.reshape((1,) * (x.ndim - 1) + (x.shape[-1],))
-
-        return x - mean_broadcast + bias_broadcast
+        # reshape/broadcast mean & bias and apply…
+        mean_b = mean.reshape((1,) * (x.ndim - 1) + (x.shape[-1],))
+        bias_b = self.bias.reshape(mean_b.shape)
+        return x - mean_b + bias_b
 
 
 class LipDyT(nnx.Module):
@@ -143,50 +125,24 @@ class LipDyT(nnx.Module):
 
 
 class LayerCentering(nnx.Module):
-    """Per-feature mean–centering (no scaling, no variance).
-
-    Args
-    ----
-    reduction_axes : int | tuple[int, ...], default -1
-        Axes over which to compute the mean that will be subtracted.
-    dtype : jax.numpy.dtype | None
-        Output dtype. If None, inferred from `x`.
-    """
+    """LayerCentering module for per-feature centering (no running mean)."""
 
     def __init__(
         self,
-        momentum=0.9,
         *,
         reduction_axes: tp.Union[int, tuple[int, ...]] = -1,
         dtype: tp.Optional[jnp.dtype] = None,
-        use_running_average: bool = False,
     ):
         super().__init__()
         self.reduction_axes = reduction_axes
         self.dtype = dtype
-        self.mean = None
-        self.momentum = momentum
-        self.use_running_average = use_running_average
 
-    def __call__(self, x: jax.Array):
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         axes = self._canonical_axes(x.ndim, self.reduction_axes)
-
-        if self.use_running_average:
-            if self.mean is None:
-                mean = jnp.mean(x, axis=axes, keepdims=True)
-            else:
-                mean = self.mean
-        else:
-            curr_mean = jnp.mean(x, axis=axes, keepdims=True)
-
-            if self.mean is None:
-                self.mean = curr_mean
-            elif self.mean is not None:
-                self.mean = self.momentum * self.mean + (1 - self.momentum) * curr_mean
-            mean = self.mean
-
-        y = x - mean
-        return y
+        mean = jnp.mean(x, axis=axes, keepdims=True)
+        if self.dtype is not None:
+            mean = mean.astype(self.dtype)
+        return x - mean
 
     @staticmethod
     def _canonical_axes(rank: int, axes: tp.Union[int, tp.Iterable[int]]):

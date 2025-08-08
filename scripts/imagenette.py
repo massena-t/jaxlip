@@ -43,13 +43,13 @@ def parse_args():
     parser.add_argument(
         "--detach_iter",
         type=int,
-        default=20,
+        default=25,
         help="Nb of TN iterations during training",
     )
     parser.add_argument(
         "--num_iters_train",
         type=int,
-        default=50,
+        default=60,
         help="Nb of TN iterations during training",
     )
     parser.add_argument(
@@ -61,17 +61,18 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="convnet",
+        default="mixer",
         choices=["mixer", "convnet"],
         help="Loss function to use",
     )
     parser.add_argument(
         "--loss_fn",
         type=str,
-        default="hkr",
+        default="tau_cce",
         choices=["hkr", "xent", "tau_cce"],
         help="Loss function to use",
     )
+    parser.add_argument("--use_pmap", action="store_true")
     args = parser.parse_args()
     return args
 
@@ -89,26 +90,47 @@ def augment(img, label):
     return img, label
 
 
-def get_datasets(bs):
+def get_datasets(bs, use_pmap=False):
+    num_devices = jax.local_device_count() if use_pmap else 1
+    assert bs % num_devices == 0, (
+        f"Batch size {bs} not divisible by {num_devices} devices"
+    )
+    per_device_bs = bs // num_devices
+
     train_ds = (
         tfds.load("imagenette", split="train", as_supervised=True)
         .map(preprocess, num_parallel_calls=tf.data.AUTOTUNE)  # deterministic
         .map(augment, num_parallel_calls=tf.data.AUTOTUNE)  # stochastic
         .shuffle(10_000)
-        .batch(bs, drop_remainder=True)
+        .repeat()
+        .batch(per_device_bs, drop_remainder=True)
         .prefetch(tf.data.AUTOTUNE)
     )
     test_ds = (
         tfds.load("imagenette", split="validation", as_supervised=True)
         .map(preprocess, num_parallel_calls=tf.data.AUTOTUNE)  # deterministic
         .shuffle(10_000)
-        .batch(bs, drop_remainder=True)
+        .repeat()
+        .batch(per_device_bs, drop_remainder=True)
         .prefetch(tf.data.AUTOTUNE)
     )
     return tfds.as_numpy(train_ds), tfds.as_numpy(test_ds)
 
 
+def shard_batch(batch, num_devices):
+    return jax.tree.map(lambda x: x.reshape((num_devices, -1) + x.shape[1:]), batch)
+
+
 def main(args):
+    builder = tfds.builder("imagenette")
+    info = builder.info
+    num_train = info.splits["train"].num_examples
+    num_val = info.splits["validation"].num_examples
+    steps_per_epoch = num_train // args.batch_size
+    val_steps = num_val // args.batch_size
+    num_devices = jax.local_device_count() if args.use_pmap else 1
+    print(f"Using {num_devices} device(s) for training")
+
     rng = nnx.Rngs(params=jax.random.key(0))
     model = get_model(rng, args, dataset="imagenette")
     optimizer = nnx.Optimizer(model, optax.adam(args.lr))
@@ -119,7 +141,7 @@ def main(args):
     )
     print(f"Nb params: {total_params:.2f}M")
 
-    train_iter, test_iter = get_datasets(bs=args.batch_size)
+    train_loader, test_loader = get_datasets(bs=args.batch_size)
 
     from jaxlip.loss import LseHKRMulticlassLoss, LossXEnt, TauCCE
 
@@ -129,18 +151,32 @@ def main(args):
         "tau_cce": TauCCE(temperature=args.temperature),
     }[args.loss_fn]
 
-    @nnx.jit
-    def train_step(model, optimizer, x, y, rescale_grads=True):
+    # Define state axes for nnx.pmap
+    state_axes = nnx.StateAxes(
+        {
+            nnx.Param: None,
+            nnx.Cache: None,
+            nnx.BatchStat: None,
+        }
+    )
+
+    @nnx.pmap(
+        in_axes=(state_axes, None, 0, 0),
+        out_axes=(state_axes, None, 0),
+        axis_name="device",
+    )
+    def train_step(model, optimizer, x, y):
         def loss_fn(m):
             logits = m(x)
             return chosen_loss(logits, y)
 
         loss, grads = nnx.value_and_grad(loss_fn)(model)
+        grads = jax.lax.pmean(grads, axis_name="device")
         optimizer.update(grads)
-        return loss
+        return model, optimizer, loss
 
-    @nnx.jit
-    def eval(model, x, y):
+    @nnx.pmap(in_axes=(None, 0, 0), out_axes=(0, 0))
+    def eval_step(model, x, y):
         logits = model(x)
         sorted_logits = jnp.sort(logits, axis=-1)
         max1 = sorted_logits[..., -1]
@@ -152,38 +188,47 @@ def main(args):
         return jnp.mean(correct), jnp.mean(robust)
 
     model.train()
-    for epoch in range(args.epochs):
-        correct, total = 0, 0
-        running_loss = 0
-        for img, lbl in train_iter:
-            x, y = jnp.array(img, jnp.float32), jnp.array(lbl, dtype=jnp.int32)
-            running_loss += train_step(model, optimizer, x, y)
+    for epoch in range(1, args.epochs + 1):
+        test_acc = test_cra = train_loss = 0
+        train_batches = 0
+
+        train_iter = iter(train_loader)
+        test_iter = iter(test_loader)
+
+        for _ in range(steps_per_epoch):
+            batch_images, batch_labels = [], []
+            for _ in range(num_devices):
+                images, labels = next(train_iter)
+                batch_images.append(images)
+                batch_labels.append(labels)
+
+            x = jnp.array(np.concatenate(batch_images), dtype=jnp.float32)
+            y = jnp.array(np.concatenate(batch_labels), dtype=jnp.int32)
+            x = shard_batch(x, num_devices)
+            y = shard_batch(y, num_devices)
+
+            model, optimizer, loss = train_step(model, optimizer, x, y)
+            train_loss += jnp.mean(loss)
+            train_batches += 1
 
         cache_model_params(model, verbose=False)
-        train_acc = train_cra = 0
-        for img, lbl in train_iter:
-            x, y = jnp.array(img, jnp.float32), jnp.array(lbl, dtype=jnp.int32)
-            acc, rob = eval(model, x, y)
-            train_acc += acc
-            train_cra += rob
-        train_acc /= len(train_iter)
-        train_cra /= len(train_iter)
 
-        val_acc = val_cra = 0
-        for img, lbl in test_iter:
-            x, y = jnp.array(img, jnp.float32), jnp.array(lbl, dtype=jnp.int32)
-            acc, rob = eval(model, x, y)
-            val_acc += acc
-            val_cra += rob
-        val_acc /= len(test_iter)
-        val_cra /= len(test_iter)
+        val_acc = val_cra = test_batches = 0
+
+        for _ in range(val_steps):
+            images, labels = next(test_iter)
+            x = shard_batch(images, num_devices)
+            y = shard_batch(labels, num_devices)
+            acc, rob = eval_step(model, x, y)
+            test_acc += float(acc.mean())
+            test_cra += float(rob.mean())
+            test_batches += 1
+        test_acc /= test_batches
+        test_cra /= test_batches
+
         uncache_model_params(model)
-
-        print(f"Epoch {epoch + 1}, loss: {running_loss / len(train_iter):.4f}")
-        print(
-            f"\t Train acc: {100 * train_acc:.3f}%, Train CRA: {100 * train_cra:.3f}%"
-        )
-        print(f"\t Val acc: {100 * val_acc:.3f}%, CRA: {100 * val_cra:.3f}%\n")
+        print(f"Epoch {epoch}, loss: {train_loss / train_batches:.4f}")
+        print(f"\t Test acc: {100 * test_acc:.3f}%, CRA: {100 * test_cra:.3f}%\n")
         print("")
 
 

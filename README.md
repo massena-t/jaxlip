@@ -92,3 +92,7 @@ Run tests using Python's unittest:
 python -m unittest tests/*.py
 ```
 
+To tests multi-gpu setups using Python's unittest:
+```bash
+CUDA_VISIBLE_DEVICES=0,1 python -m unittest tests/multi-gpu/*.py
+```
