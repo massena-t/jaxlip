@@ -2,10 +2,9 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
-AXIS_NAME = "device"  # baked-in; never pass this through JAX-traced funcs
+AXIS_NAME = "device"
 
 
-# --- keep YOUR orthogonalize_ns exactly as you pasted ---
 def orthogonalize_ns(M):
     # by @YouJiacheng (with stability loss idea from @leloykun)
     abc_list = [

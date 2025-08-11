@@ -1,4 +1,3 @@
-# jaxlip/reparam/assign.py
 import jax
 from flax import nnx
 from collections.abc import Mapping, Sequence

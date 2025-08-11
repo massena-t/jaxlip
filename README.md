@@ -48,6 +48,7 @@ output = model(x)
 ### Linear Layers
 - **SpectralLinear**: Linear layer with spectral normalization
 - **OrthoLinear**: Linear layer with orthogonal weight constraints
+- **DistributedOrthoLinear**: Linear layer where the Newton Schulz weight reparametrization is computed efficiently across devices.
 
 ### Convolutional Layers  
 - **SpectralConv2d**: 2D convolution with spectral normalization

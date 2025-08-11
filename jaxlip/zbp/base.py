@@ -2,7 +2,7 @@ from typing import Optional, Callable, List
 import jax.numpy as jnp
 from flax import nnx
 from .distributed_op import reparam_distributed
-from .distributed_op import orthogonalize_ns  # default f if none provided
+from .distributed_op import orthogonalize_ns
 
 class ReparametrizedModule(nnx.Module):
     owner: int = -1
