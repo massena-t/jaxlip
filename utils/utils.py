@@ -33,7 +33,7 @@ def get_model(rng, args, dataset):
         }[dataset]
         stem_stride = {
             "cifar10": 1,
-            "imagenette": 2,
+            "imagenette": 1,
         }[dataset]
         model = ConvNet(
             rngs=rng,
@@ -64,6 +64,7 @@ def get_model(rng, args, dataset):
             rngs=rng,
             mean=mean,
             std=std,
+            distribute_reparams=args.distribute_reparams,
         )
     else:
         raise ValueError(f"Unknown model type: {args.model}")

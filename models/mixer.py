@@ -7,7 +7,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 
 import einops
 from jaxlip.conv import SpectralConv2d
-from jaxlip.linear import OrthoLinear, SpectralLinear
+from jaxlip.linear import OrthoLinear, SpectralLinear, DistributedOrthoLinear
 from jaxlip.batchop import LipDyT, BatchCentering, LayerCentering
 from jaxlip.activations import GroupSort2
 from flax import nnx
@@ -17,10 +17,6 @@ from typing import Sequence
 import jax
 import jax.numpy as jnp
 from flax import nnx
-
-lin_layer = OrthoLinear
-# lin_layer = SpectralLinear
-
 
 class PatchEmbedding(nnx.Module):
     """Convert an (H, W, C) image into a sequence of patch embeddings.
@@ -36,7 +32,7 @@ class PatchEmbedding(nnx.Module):
     """
 
     def __init__(
-        self, *, patch_size: int, in_channels: int, hidden_dim: int, rngs: nnx.Rngs
+            self, *, patch_size: int, in_channels: int, hidden_dim: int, lin_layer:nnx.Module, rngs: nnx.Rngs
     ):
         self.patch_size = patch_size
         self.in_channels = in_channels
@@ -50,7 +46,7 @@ class PatchEmbedding(nnx.Module):
             rngs=rngs,
         )
 
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:  # (B, H, W, C)
+    def __call__(self, x: jnp.ndarray, *, reparam_overrides=None) -> jnp.ndarray:  # (B, H, W, C)
         batch, height, width, channels = x.shape
         assert channels == self.in_channels, (
             f"Expected {self.in_channels} channels, got {channels}"
@@ -76,7 +72,7 @@ class PatchEmbedding(nnx.Module):
         x = x.reshape(batch, num_patches, self.patch_size * self.patch_size * channels)
 
         # Linear projection to hidden_dim D
-        x = self.proj(x)  # (B, N, D)
+        x = self.proj(x, reparam_overrides=reparam_overrides)  # (B, N, D)
         return x
 
 
@@ -87,6 +83,7 @@ class MLP(nnx.Module):
         in_features: int,
         hidden_features: int,
         out_features: int,
+        lin_layer: nnx.Module,
         rngs: nnx.Rngs,
     ):
         self.fc1 = lin_layer(din=in_features, dout=hidden_features, rngs=rngs)
@@ -94,10 +91,10 @@ class MLP(nnx.Module):
         self.fc2 = lin_layer(din=hidden_features, dout=out_features, rngs=rngs)
         self.bc = BatchCentering(out_features)
 
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        x = self.fc1(x)
+    def __call__(self, x: jnp.ndarray, *, reparam_overrides=None) -> jnp.ndarray:
+        x = self.fc1(x, reparam_overrides=reparam_overrides)
         x = self.act(x)
-        x = self.fc2(x)
+        x = self.fc2(x, reparam_overrides=reparam_overrides)
         x = self.bc(x)
         return x
 
@@ -120,6 +117,7 @@ class MixerBlock(nnx.Module):
         hidden_dim: int,
         tokens_mlp_dim: int,
         channels_mlp_dim: int,
+        lin_layer: nnx.Module,
         rngs: nnx.Rngs,
     ):
         self.norm1 = LayerCentering()
@@ -127,6 +125,7 @@ class MixerBlock(nnx.Module):
             in_features=num_patches,
             hidden_features=tokens_mlp_dim,
             out_features=num_patches,
+            lin_layer=lin_layer,
             rngs=rngs,
         )
 
@@ -135,21 +134,22 @@ class MixerBlock(nnx.Module):
             in_features=hidden_dim,
             hidden_features=channels_mlp_dim,
             out_features=hidden_dim,
+            lin_layer=lin_layer,
             rngs=rngs,
         )
         self.dyt = LipDyT(hidden_dim, rngs=rngs)
 
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:  # (B, N, D)
+    def __call__(self, x: jnp.ndarray, *, reparam_overrides=None) -> jnp.ndarray:  # (B, N, D)
         # Token mixing ─ mix information across patches (N dimension)
         y = self.norm1(x)
         y = jnp.transpose(y, (0, 2, 1))  # (B, D, N) so N is last axis
-        y = self.token_mlp(y)  # (B, D, N)
+        y = self.token_mlp(y, reparam_overrides=reparam_overrides)  # (B, D, N)
         y = jnp.transpose(y, (0, 2, 1))  # (B, N, D)
         x = 0.5 * (x + y)  # Residual
 
         # Channel mixing ─ mix information across hidden channels (D dimension)
         y = self.norm2(x)
-        y = self.channel_mlp(y)  # (B, N, D)
+        y = self.channel_mlp(y, reparam_overrides=reparam_overrides)  # (B, N, D)
         x = 0.5 * (x + y)  # Residual
         x = self.dyt(x)  # LipDyT layer
         return x
@@ -190,7 +190,10 @@ class MLPMixer(nnx.Module):
         rngs: nnx.Rngs,
         mean=None,
         std=None,
+        distribute_reparams=False,
     ):
+        lin_layer = DistributedOrthoLinear if distribute_reparams else OrthoLinear
+
         assert image_size % patch_size == 0, (
             "image_size must be divisible by patch_size"
         )
@@ -209,6 +212,7 @@ class MLPMixer(nnx.Module):
             in_channels=in_channels,
             hidden_dim=hidden_dim,
             rngs=rngs,
+            lin_layer=lin_layer,
         )
 
         # Register Mixer blocks as a Python list attribute
@@ -219,6 +223,7 @@ class MLPMixer(nnx.Module):
                 hidden_dim=hidden_dim,
                 tokens_mlp_dim=tokens_mlp_dim,
                 channels_mlp_dim=channels_mlp_dim,
+                lin_layer=lin_layer,
                 rngs=rngs,
             )
             setattr(self, f"mixer_block_{i}", block)  # ensures registration
@@ -227,21 +232,21 @@ class MLPMixer(nnx.Module):
         self.norm = LayerCentering()
         self.head = lin_layer(din=hidden_dim, dout=num_classes, rngs=rngs)
 
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:  # (B, H, W, C)
+    def __call__(self, x: jnp.ndarray, *, reparam_overrides=None) -> jnp.ndarray:  # (B, H, W, C)
         lipconstant = 1.0
         x = x - jnp.expand_dims(self.mean.value, axis=(0, 1, 2))
         x = x / jnp.expand_dims(self.std.value, axis=(0, 1, 2))
         lipconstant = lipconstant * 1 / jnp.min(self.std)
 
-        x = self.patch_embed(x)  # (B, N, D)
+        x = self.patch_embed(x, reparam_overrides=reparam_overrides)  # (B, N, D)
         for block in self.mixer_blocks:
-            x = block(x)  # (B, N, D)
+            x = block(x, reparam_overrides=reparam_overrides)  # (B, N, D)
             lipconstant = lipconstant * block.get_lipconstant()
 
         x = self.norm(x)  # (B, N, D)
         D = x.shape[1]
         x = jnp.mean(x, axis=1) * jnp.sqrt(D)  # (B, D)
-        logits = self.head(x)  # (B, num_classes)
+        logits = self.head(x, reparam_overrides=reparam_overrides)  # (B, num_classes)
         return logits / lipconstant
 
 

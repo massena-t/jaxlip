@@ -18,6 +18,10 @@ import cv2
 from jaxlip.utils import cache_model_params, uncache_model_params
 from utils.utils import get_model
 from jax.tree_util import tree_map_with_path
+from jaxlip.zbp.assign import assign_owners_round_robin
+from jaxlip.zbp.layout import assign_reparam_groups
+from jaxlip.zbp.pack import build_reparam_pack, apply_with_reparam
+
 
 
 def parse_args():
@@ -73,6 +77,7 @@ def parse_args():
         help="Loss function to use",
     )
     parser.add_argument("--use_pmap", action="store_true")
+    parser.add_argument("--distribute_reparams", action="store_true")
     args = parser.parse_args()
     return args
 
@@ -133,6 +138,9 @@ def main(args):
 
     rng = nnx.Rngs(params=jax.random.key(0))
     model = get_model(rng, args, dataset="imagenette")
+    if args.distribute_reparams:
+        assign_owners_round_robin(model)
+        assign_reparam_groups(model)
     optimizer = nnx.Optimizer(model, optax.adam(args.lr))
 
     params = nnx.state(model, nnx.Param)
@@ -166,16 +174,22 @@ def main(args):
         axis_name="device",
     )
     def train_step(model, optimizer, x, y):
-        def loss_fn(m):
+        def loss_fn_default(m):
             logits = m(x)
             return chosen_loss(logits, y)
 
+        def loss_fn_distribute_reparam(m):
+            Qs_groups = build_reparam_pack(m, distributed=args.use_pmap)  # under pmap
+            logits = apply_with_reparam(m, x, Qs_groups)
+            return chosen_loss(logits, y)
+
+        loss_fn = loss_fn_distribute_reparam if args.distribute_reparams else loss_fn_default
         loss, grads = nnx.value_and_grad(loss_fn)(model)
         grads = jax.lax.pmean(grads, axis_name="device")
         optimizer.update(grads)
         return model, optimizer, loss
 
-    @nnx.pmap(in_axes=(None, 0, 0), out_axes=(0, 0))
+    @nnx.pmap(in_axes=(None, 0, 0), out_axes=(0, 0), axis_name="device")
     def eval_step(model, x, y):
         logits = model(x)
         sorted_logits = jnp.sort(logits, axis=-1)

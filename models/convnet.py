@@ -98,7 +98,7 @@ class ConvNet(nnx.Module):
             previous_dim = dim
 
         self.conv = nnx.Sequential(*layers)
-        self.head = OrthoLinear(
+        self.head = SpectralLinear(
             din=previous_dim * h * w,
             dout=num_classes,
             rngs=rngs,
@@ -112,7 +112,7 @@ class ConvNet(nnx.Module):
             nnx.Cache(jnp.array(std)) if std is not None else nnx.Cache(jnp.array(1.0))
         )
 
-    def __call__(self, x):
+    def __call__(self, x, *args, **kwargs):
         lipconstant = 1.0
         x = x - jnp.expand_dims(self.mean, axis=(0, 1, 2))
         x = x / jnp.expand_dims(self.std, axis=(0, 1, 2))
