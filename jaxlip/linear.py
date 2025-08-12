@@ -119,6 +119,7 @@ class SpectralLinear(nnx.Module):
             y = x @ self.cache.value
         return y + self.b if self.bias else y
 
+
 class OrthoLinear(nnx.Module):
     """Linear layer with orthogonal weight constraints for Lipschitz control.
 
@@ -210,6 +211,7 @@ class OrthoLinear(nnx.Module):
             y = x @ self.cache.value
         return y + self.b if self.bias else y
 
+
 class DistributedOrthoLinear(ReparametrizedModule):
     """Linear layer with orthogonal weight constraints for Lipschitz control.
 
@@ -230,7 +232,15 @@ class DistributedOrthoLinear(ReparametrizedModule):
         bias (bool): Whether to include bias term.
     """
 
-    def __init__(self, din: int, dout: int, bias: bool = True, *, rngs: nnx.Rngs, axis_name: str | None = "device"):
+    def __init__(
+        self,
+        din: int,
+        dout: int,
+        bias: bool = True,
+        *,
+        rngs: nnx.Rngs,
+        axis_name: str | None = "device",
+    ):
         """Initialize the OrthoLinear layer.
 
         Args:
@@ -261,7 +271,7 @@ class DistributedOrthoLinear(ReparametrizedModule):
 
         self._W_orth_tmp = nnx.Cache(jnp.zeros_like(self.w), collection="cache")
         self.axis_name = axis_name
-        self.owner = -1 
+        self.owner = -1
 
     def _cache_params(self):
         """Cache the orthogonalized weights for efficient evaluation.
@@ -301,9 +311,9 @@ class DistributedOrthoLinear(ReparametrizedModule):
         if not self.cached:
             if reparam_overrides is not None and self._zbp_gid >= 0:
                 Qs_group = reparam_overrides[self._zbp_gid]
-                W_tilde  = Qs_group[self._zbp_idx]      # pure read
+                W_tilde = Qs_group[self._zbp_idx]  # pure read
             else:
-                W_tilde  = self.distributed_reparam(self.w)
+                W_tilde = self.distributed_reparam(self.w)
             y = x @ W_tilde
         else:
             y = x @ self.cache.value

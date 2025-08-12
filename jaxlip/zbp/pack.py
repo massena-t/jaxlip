@@ -3,7 +3,9 @@ import jax
 import jax.numpy as jnp
 from .assign import _walk_modules
 from .base import ReparametrizedModule
-from .distributed_op import reparam_distributed_vmap, orthogonalize_ns
+from .distributed_op import reparam_distributed_vmap
+from ..newton_schulz import orthogonalize
+
 
 def build_reparam_pack(model, *, distributed: bool = True) -> List[jnp.ndarray]:
     """
@@ -19,21 +21,24 @@ def build_reparam_pack(model, *, distributed: bool = True) -> List[jnp.ndarray]:
             gid = getattr(m, "_zbp_gid", None)
             idx = getattr(m, "_zbp_idx", None)
             if gid is None or idx is None:
-                raise ValueError("assign_reparam_groups(model) must be called before build_reparam_pack")
+                raise ValueError(
+                    "assign_reparam_groups(model) must be called before build_reparam_pack"
+                )
             groups.setdefault(gid, []).append(m)
     # Ensure ordering by gid then idx
     max_gid = max(groups.keys()) if groups else -1
     Qs_groups: List[jnp.ndarray] = []
     for gid in range(max_gid + 1):
         mods = sorted(groups[gid], key=lambda m: m._zbp_idx)
-        Ws     = jnp.stack([m.w for m in mods], axis=0)                 # [G, din, dout]
+        Ws = jnp.stack([m.w for m in mods], axis=0)  # [G, din, dout]
         owners = jnp.asarray([m.owner for m in mods], dtype=jnp.int32)  # [G]
         if distributed:
-            Qs = reparam_distributed_vmap(Ws, owners)                   # [G, din, dout]
+            Qs = reparam_distributed_vmap(Ws, owners)  # [G, din, dout]
         else:
-            Qs = jax.vmap(orthogonalize_ns, in_axes=0, out_axes=0)(Ws)  # local fallback
+            Qs = jax.vmap(orthogonalize, in_axes=0, out_axes=0)(Ws)  # local fallback
         Qs_groups.append(Qs)
     return Qs_groups
+
 
 def apply_with_reparam(model, x, Qs_groups: List[jnp.ndarray]):
     """
@@ -41,4 +46,3 @@ def apply_with_reparam(model, x, Qs_groups: List[jnp.ndarray]):
     will pick their Q as Qs_groups[self._zbp_gid][self._zbp_idx].
     """
     return model(x, reparam_overrides=Qs_groups)
-

@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+
 class PatchEmbedding(nnx.Module):
     """Convert an (H, W, C) image into a sequence of patch embeddings.
 
@@ -32,7 +33,13 @@ class PatchEmbedding(nnx.Module):
     """
 
     def __init__(
-            self, *, patch_size: int, in_channels: int, hidden_dim: int, lin_layer:nnx.Module, rngs: nnx.Rngs
+        self,
+        *,
+        patch_size: int,
+        in_channels: int,
+        hidden_dim: int,
+        lin_layer: nnx.Module,
+        rngs: nnx.Rngs,
     ):
         self.patch_size = patch_size
         self.in_channels = in_channels
@@ -46,7 +53,9 @@ class PatchEmbedding(nnx.Module):
             rngs=rngs,
         )
 
-    def __call__(self, x: jnp.ndarray, *, reparam_overrides=None) -> jnp.ndarray:  # (B, H, W, C)
+    def __call__(
+        self, x: jnp.ndarray, *, reparam_overrides=None
+    ) -> jnp.ndarray:  # (B, H, W, C)
         batch, height, width, channels = x.shape
         assert channels == self.in_channels, (
             f"Expected {self.in_channels} channels, got {channels}"
@@ -139,7 +148,9 @@ class MixerBlock(nnx.Module):
         )
         self.dyt = LipDyT(hidden_dim, rngs=rngs)
 
-    def __call__(self, x: jnp.ndarray, *, reparam_overrides=None) -> jnp.ndarray:  # (B, N, D)
+    def __call__(
+        self, x: jnp.ndarray, *, reparam_overrides=None
+    ) -> jnp.ndarray:  # (B, N, D)
         # Token mixing ─ mix information across patches (N dimension)
         y = self.norm1(x)
         y = jnp.transpose(y, (0, 2, 1))  # (B, D, N) so N is last axis
@@ -232,7 +243,9 @@ class MLPMixer(nnx.Module):
         self.norm = LayerCentering()
         self.head = lin_layer(din=hidden_dim, dout=num_classes, rngs=rngs)
 
-    def __call__(self, x: jnp.ndarray, *, reparam_overrides=None) -> jnp.ndarray:  # (B, H, W, C)
+    def __call__(
+        self, x: jnp.ndarray, *, reparam_overrides=None
+    ) -> jnp.ndarray:  # (B, H, W, C)
         lipconstant = 1.0
         x = x - jnp.expand_dims(self.mean.value, axis=(0, 1, 2))
         x = x / jnp.expand_dims(self.std.value, axis=(0, 1, 2))

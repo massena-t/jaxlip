@@ -3,4 +3,4 @@ wandb
 data
 .venv
 jaxlip.egg-info
-
+debug.sh

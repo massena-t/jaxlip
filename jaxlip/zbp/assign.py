@@ -3,6 +3,7 @@ from flax import nnx
 from collections.abc import Mapping, Sequence
 from .base import ReparametrizedModule
 
+
 def _iter_children(obj):
     """Yield child containers/modules from an arbitrary Python object."""
     # nnx.Module stores submodules/vars as normal attributes
@@ -17,6 +18,7 @@ def _iter_children(obj):
         for v in obj:
             yield v
     # else: leaf (Param, ndarray, int, None, etc.)
+
 
 def _walk_modules(root):
     """Iterative DFS that yields modules; avoids cycles by id()."""
@@ -36,6 +38,7 @@ def _walk_modules(root):
             # Only follow containers / modules to keep it cheap
             if isinstance(child, (nnx.Module, Mapping, list, tuple, set)):
                 stack.append(child)
+
 
 def assign_owners_round_robin(model, *, num_devices: int | None = None):
     """Set `owner` field on every ReparametrizedModule in `model`."""

@@ -23,7 +23,6 @@ from jaxlip.zbp.layout import assign_reparam_groups
 from jaxlip.zbp.pack import build_reparam_pack, apply_with_reparam
 
 
-
 def parse_args():
     import argparse
 
@@ -183,7 +182,9 @@ def main(args):
             logits = apply_with_reparam(m, x, Qs_groups)
             return chosen_loss(logits, y)
 
-        loss_fn = loss_fn_distribute_reparam if args.distribute_reparams else loss_fn_default
+        loss_fn = (
+            loss_fn_distribute_reparam if args.distribute_reparams else loss_fn_default
+        )
         loss, grads = nnx.value_and_grad(loss_fn)(model)
         grads = jax.lax.pmean(grads, axis_name="device")
         optimizer.update(grads)

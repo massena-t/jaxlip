@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 
 
@@ -34,6 +35,7 @@ def orthogonalize(M):
         >>> # M_orth will have orthonormal columns
     """
 
+    assert M.ndim == 2
     abc_list = [
         (3955 / 1024, -8306 / 1024, 5008 / 1024),
         (3735 / 1024, -6681 / 1024, 3463 / 1024),
@@ -53,4 +55,5 @@ def orthogonalize(M):
         M = M @ (a * I + b * A + c * A @ A)
     if transpose:
         M = M.T
+    # jax.debug.print(f"{M.T @ M}")
     return M

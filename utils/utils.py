@@ -53,6 +53,9 @@ def get_model(rng, args, dataset):
             "cifar10": (4, 512, 256, 1024, 8),
             "imagenette": (8, 512, 256, 1024, 8),
         }[dataset]
+        distribute_reparams = (
+            args.distribute_reparams if hasattr(args, "distribute_reparams") else False
+        )
         model = MLPMixer(
             num_classes=num_classes,
             image_size=img_sz[0],
@@ -64,7 +67,7 @@ def get_model(rng, args, dataset):
             rngs=rng,
             mean=mean,
             std=std,
-            distribute_reparams=args.distribute_reparams,
+            distribute_reparams=distribute_reparams,
         )
     else:
         raise ValueError(f"Unknown model type: {args.model}")
