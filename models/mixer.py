@@ -57,12 +57,12 @@ class PatchEmbedding(nnx.Module):
         self, x: jnp.ndarray, *, reparam_overrides=None
     ) -> jnp.ndarray:  # (B, H, W, C)
         batch, height, width, channels = x.shape
-        assert channels == self.in_channels, (
-            f"Expected {self.in_channels} channels, got {channels}"
-        )
-        assert height % self.patch_size == 0 and width % self.patch_size == 0, (
-            "Image size must be divisible by patch size"
-        )
+        assert (
+            channels == self.in_channels
+        ), f"Expected {self.in_channels} channels, got {channels}"
+        assert (
+            height % self.patch_size == 0 and width % self.patch_size == 0
+        ), "Image size must be divisible by patch size"
 
         num_patches_h = height // self.patch_size
         num_patches_w = width // self.patch_size
@@ -205,9 +205,9 @@ class MLPMixer(nnx.Module):
     ):
         lin_layer = DistributedOrthoLinear if distribute_reparams else OrthoLinear
 
-        assert image_size % patch_size == 0, (
-            "image_size must be divisible by patch_size"
-        )
+        assert (
+            image_size % patch_size == 0
+        ), "image_size must be divisible by patch_size"
         num_patches = (image_size // patch_size) ** 2  # N
         self.mean = (
             nnx.Cache(jnp.array(mean))

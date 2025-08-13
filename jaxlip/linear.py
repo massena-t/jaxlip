@@ -7,7 +7,6 @@ from jaxlip.newton_schulz import orthogonalize
 from jax.nn.initializers import orthogonal
 
 from jaxlip.zbp.base import ReparametrizedModule
-from jaxlip.zbp.distributed_op import reparam_distributed  # if you prefer a direct call
 
 
 def l2_normalize(weight):
@@ -309,11 +308,9 @@ class DistributedOrthoLinear(ReparametrizedModule):
             Otherwise, computes orthogonalization on-the-fly using Newton-Schulz iteration.
         """
         if not self.cached:
-            if reparam_overrides is not None and self._zbp_gid >= 0:
-                Qs_group = reparam_overrides[self._zbp_gid]
-                W_tilde = Qs_group[self._zbp_idx]  # pure read
-            else:
-                W_tilde = self.distributed_reparam(self.w)
+            assert reparam_overrides is not None and self._zbp_gid >= 0
+            Qs_group = reparam_overrides[self._zbp_gid]
+            W_tilde = Qs_group[self._zbp_idx]  # pure read
             y = x @ W_tilde
         else:
             y = x @ self.cache.value

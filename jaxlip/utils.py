@@ -1,6 +1,6 @@
 from collections.abc import Mapping, Sequence
 from flax import nnx
-from jaxlip.linear import SpectralLinear, OrthoLinear
+from jaxlip.linear import SpectralLinear, OrthoLinear, DistributedOrthoLinear
 from jaxlip.batchop import BatchCentering2d, BatchCentering, LayerCentering
 from jaxlip.conv import SpectralConv2d, AOLConv2d
 
@@ -33,7 +33,16 @@ def cache_model_params(root: nnx.Module, verbose: bool = True) -> None:
             return
         visited.add(id(mod))
 
-        if isinstance(mod, (OrthoLinear, SpectralLinear, SpectralConv2d, AOLConv2d)):
+        if isinstance(
+            mod,
+            (
+                OrthoLinear,
+                SpectralLinear,
+                SpectralConv2d,
+                AOLConv2d,
+                DistributedOrthoLinear,
+            ),
+        ):
             mod._cache_params()
         if isinstance(
             mod,
@@ -84,7 +93,16 @@ def uncache_model_params(root: nnx.Module) -> None:
             return
         visited.add(id(mod))
 
-        if isinstance(mod, (OrthoLinear, SpectralLinear, SpectralConv2d, AOLConv2d)):
+        if isinstance(
+            mod,
+            (
+                OrthoLinear,
+                SpectralLinear,
+                SpectralConv2d,
+                AOLConv2d,
+                DistributedOrthoLinear,
+            ),
+        ):
             mod._uncache()
         if isinstance(
             mod,

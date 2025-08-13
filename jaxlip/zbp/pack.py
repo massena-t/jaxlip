@@ -7,7 +7,7 @@ from .distributed_op import reparam_distributed_vmap
 from ..newton_schulz import orthogonalize
 
 
-def build_reparam_pack(model, *, distributed: bool = True) -> List[jnp.ndarray]:
+def build_reparam_pack(model) -> List[jnp.ndarray]:
     """
     Returns a list 'Qs_groups' where each item is an array of shape
     [group_size, din, dout] aligned with model._zbp_gid grouping.
@@ -32,10 +32,7 @@ def build_reparam_pack(model, *, distributed: bool = True) -> List[jnp.ndarray]:
         mods = sorted(groups[gid], key=lambda m: m._zbp_idx)
         Ws = jnp.stack([m.w for m in mods], axis=0)  # [G, din, dout]
         owners = jnp.asarray([m.owner for m in mods], dtype=jnp.int32)  # [G]
-        if distributed:
-            Qs = reparam_distributed_vmap(Ws, owners)  # [G, din, dout]
-        else:
-            Qs = jax.vmap(orthogonalize, in_axes=0, out_axes=0)(Ws)  # local fallback
+        Qs = reparam_distributed_vmap(Ws, owners)  # [G, din, dout]
         Qs_groups.append(Qs)
     return Qs_groups
 

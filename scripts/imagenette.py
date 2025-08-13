@@ -1,6 +1,9 @@
 import os
 import sys
 
+os.environ["XLA_FLAGS"] = (
+    "--xla_gpu_triton_gemm_any=True " "--xla_gpu_enable_latency_hiding_scheduler=true "
+)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 
@@ -96,9 +99,9 @@ def augment(img, label):
 
 def get_datasets(bs, use_pmap=False):
     num_devices = jax.local_device_count() if use_pmap else 1
-    assert bs % num_devices == 0, (
-        f"Batch size {bs} not divisible by {num_devices} devices"
-    )
+    assert (
+        bs % num_devices == 0
+    ), f"Batch size {bs} not divisible by {num_devices} devices"
     per_device_bs = bs // num_devices
 
     train_ds = (
@@ -178,7 +181,7 @@ def main(args):
             return chosen_loss(logits, y)
 
         def loss_fn_distribute_reparam(m):
-            Qs_groups = build_reparam_pack(m, distributed=args.use_pmap)  # under pmap
+            Qs_groups = build_reparam_pack(m)  # under pmap
             logits = apply_with_reparam(m, x, Qs_groups)
             return chosen_loss(logits, y)
 
@@ -228,7 +231,7 @@ def main(args):
 
         cache_model_params(model, verbose=False)
 
-        val_acc = val_cra = test_batches = 0
+        test_batches = 0
 
         for _ in range(val_steps):
             images, labels = next(test_iter)
