@@ -72,6 +72,10 @@ def parse_args():
         choices=["hkr", "xent", "tau_cce"],
         help="Loss function to use",
     )
+    parser.add_argument(
+        "--batch_reparams",
+        action="store_true",
+    )
     args = parser.parse_args()
     return args
 
@@ -159,7 +163,7 @@ def main(args):
         train_acc /= len(train_iter)
         train_cra /= len(train_iter)
 
-        # model.eval()
+        model.eval()
         val_acc = val_cra = 0
         for images, labels in test_iter:
             x = jnp.array(images, jnp.float32) / 255.0

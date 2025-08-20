@@ -37,7 +37,8 @@ class ConvNet(nnx.Module):
     ):
         h, w, in_features = input_shape
         conv_layer = partial(
-            AOLConv2d,
+            SpectralConv2d,
+            # AOLConv2d,
             bias=False,
             num_iters_train=num_iters_train,
             num_iters_eval=num_iters_eval,

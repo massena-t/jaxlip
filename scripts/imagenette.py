@@ -18,6 +18,7 @@ import cv2
 from jaxlip.utils import cache_model_params, uncache_model_params
 from utils.utils import get_model
 from jax.tree_util import tree_map_with_path
+from jaxlip.linear import ParametrizedLinear
 
 
 def parse_args():
@@ -41,28 +42,10 @@ def parse_args():
         "--offset", type=float, default=0.1, help="Offset for cross-entropy loss"
     )
     parser.add_argument(
-        "--detach_iter",
-        type=int,
-        default=25,
-        help="Nb of TN iterations during training",
-    )
-    parser.add_argument(
-        "--num_iters_train",
-        type=int,
-        default=60,
-        help="Nb of TN iterations during training",
-    )
-    parser.add_argument(
-        "--num_iters_eval",
-        type=int,
-        default=80,
-        help="Nb of TN iterations during evaluation",
-    )
-    parser.add_argument(
         "--model",
         type=str,
         default="mixer",
-        choices=["mixer", "convnet"],
+        choices=["mixer"],
         help="Loss function to use",
     )
     parser.add_argument(
@@ -73,6 +56,7 @@ def parse_args():
         help="Loss function to use",
     )
     parser.add_argument("--use_pmap", action="store_true")
+    parser.add_argument("--vmap_reparams", action="store_true")
     args = parser.parse_args()
     return args
 
@@ -86,7 +70,7 @@ def preprocess(img, label):
 def augment(img, label):
     img = tf.image.random_flip_left_right(img)
     img = tf.image.random_brightness(img, 0.1)
-    img = tf.image.random_crop(img, size=[128, 128, 3])  # same shape out
+    img = tf.image.random_crop(img, size=[128, 128, 3])
     return img, label
 
 
@@ -95,23 +79,20 @@ def get_datasets(bs, use_pmap=False):
     assert bs % num_devices == 0, (
         f"Batch size {bs} not divisible by {num_devices} devices"
     )
-    per_device_bs = bs // num_devices
 
     train_ds = (
         tfds.load("imagenette", split="train", as_supervised=True)
-        .map(preprocess, num_parallel_calls=tf.data.AUTOTUNE)  # deterministic
-        .map(augment, num_parallel_calls=tf.data.AUTOTUNE)  # stochastic
+        .map(preprocess, num_parallel_calls=tf.data.AUTOTUNE)
+        .map(augment, num_parallel_calls=tf.data.AUTOTUNE)
         .shuffle(10_000)
-        .repeat()
-        .batch(per_device_bs, drop_remainder=True)
+        .batch(bs, drop_remainder=True)
         .prefetch(tf.data.AUTOTUNE)
     )
     test_ds = (
         tfds.load("imagenette", split="validation", as_supervised=True)
-        .map(preprocess, num_parallel_calls=tf.data.AUTOTUNE)  # deterministic
+        .map(preprocess, num_parallel_calls=tf.data.AUTOTUNE)
         .shuffle(10_000)
-        .repeat()
-        .batch(per_device_bs, drop_remainder=True)
+        .batch(bs, drop_remainder=True)
         .prefetch(tf.data.AUTOTUNE)
     )
     return tfds.as_numpy(train_ds), tfds.as_numpy(test_ds)
@@ -123,18 +104,11 @@ def shard_batch(batch, num_devices):
 
 def main(args):
     builder = tfds.builder("imagenette")
-    info = builder.info
-    num_train = info.splits["train"].num_examples
-    num_val = info.splits["validation"].num_examples
-    steps_per_epoch = num_train // args.batch_size
-    val_steps = num_val // args.batch_size
     num_devices = jax.local_device_count() if args.use_pmap else 1
     print(f"Using {num_devices} device(s) for training")
 
     rng = nnx.Rngs(params=jax.random.key(0))
     model = get_model(rng, args, dataset="imagenette")
-    optimizer = nnx.Optimizer(model, optax.adam(args.lr))
-
     params = nnx.state(model, nnx.Param)
     total_params = (
         sum(np.prod(x.shape) for x in jax.tree_util.tree_leaves(params)) / 1e6
@@ -145,88 +119,54 @@ def main(args):
 
     from jaxlip.loss import LseHKRMulticlassLoss, LossXEnt, TauCCE
 
-    chosen_loss = {
+    loss = {
         "hkr": LseHKRMulticlassLoss(alpha=args.alpha, temperature=args.temperature),
         "xent": LossXEnt(offset=args.offset, temperature=args.temperature),
         "tau_cce": TauCCE(temperature=args.temperature),
     }[args.loss_fn]
 
-    # Define state axes for nnx.pmap
-    state_axes = nnx.StateAxes(
-        {
-            nnx.Param: None,
-            nnx.Cache: None,
-            nnx.BatchStat: None,
-        }
+    from jaxlip.trainer import Trainer
+
+    if not args.vmap_reparams:
+        optimizer = nnx.Optimizer(model, optax.adam(args.lr))
+    else:
+        optimizer = optax.adam(args.lr)
+
+    trainer = Trainer(
+        model,
+        optimizer,
+        loss,
+        distributed=args.use_pmap,
+        vmap_reparametrizations=args.vmap_reparams,
     )
 
-    @nnx.pmap(
-        in_axes=(state_axes, None, 0, 0),
-        out_axes=(state_axes, None, 0),
-        axis_name="device",
-    )
-    def train_step(model, optimizer, x, y):
-        def loss_fn(m):
-            logits = m(x)
-            return chosen_loss(logits, y)
-
-        loss, grads = nnx.value_and_grad(loss_fn)(model)
-        grads = jax.lax.pmean(grads, axis_name="device")
-        optimizer.update(grads)
-        return model, optimizer, loss
-
-    @nnx.pmap(in_axes=(None, 0, 0), out_axes=(0, 0))
-    def eval_step(model, x, y):
-        logits = model(x)
-        sorted_logits = jnp.sort(logits, axis=-1)
-        max1 = sorted_logits[..., -1]
-        max2 = sorted_logits[..., -2]
-        margin = max1 - max2
-        correct = jnp.argmax(logits, axis=-1) == y
-        is_wide = margin > (jnp.sqrt(2.0) * 36.0 / 255.0)
-        robust = jnp.logical_and(correct, is_wide)
-        return jnp.mean(correct), jnp.mean(robust)
-
-    model.train()
     for epoch in range(1, args.epochs + 1):
+        trainer.train()
         test_acc = test_cra = train_loss = 0
         train_batches = 0
 
-        train_iter = iter(train_loader)
-        test_iter = iter(test_loader)
-
-        for _ in range(steps_per_epoch):
-            batch_images, batch_labels = [], []
-            for _ in range(num_devices):
-                images, labels = next(train_iter)
-                batch_images.append(images)
-                batch_labels.append(labels)
-
-            x = jnp.array(np.concatenate(batch_images), dtype=jnp.float32)
-            y = jnp.array(np.concatenate(batch_labels), dtype=jnp.int32)
-            x = shard_batch(x, num_devices)
-            y = shard_batch(y, num_devices)
-
-            model, optimizer, loss = train_step(model, optimizer, x, y)
-            train_loss += jnp.mean(loss)
+        for x, y in train_loader:
+            if args.use_pmap:
+                x = shard_batch(x, num_devices)
+                y = shard_batch(y, num_devices)
+            loss_val = trainer.train_step(x, y)
+            train_loss += float(loss_val)
             train_batches += 1
 
-        cache_model_params(model, verbose=False)
+        trainer.eval()
 
-        val_acc = val_cra = test_batches = 0
+        correct = robust = total = 0
 
-        for _ in range(val_steps):
-            images, labels = next(test_iter)
-            x = shard_batch(images, num_devices)
-            y = shard_batch(labels, num_devices)
-            acc, rob = eval_step(model, x, y)
-            test_acc += float(acc.mean())
-            test_cra += float(rob.mean())
-            test_batches += 1
-        test_acc /= test_batches
-        test_cra /= test_batches
-
-        uncache_model_params(model)
+        for x, y in test_loader:
+            if args.use_pmap:
+                x = shard_batch(x, num_devices)
+                y = shard_batch(y, num_devices)
+            acc, rob = trainer.eval_step(x, y)
+            correct += float(acc)
+            robust += float(rob)
+            total += 1
+        test_acc = correct / total
+        test_cra = robust / total
         print(f"Epoch {epoch}, loss: {train_loss / train_batches:.4f}")
         print(f"\t Test acc: {100 * test_acc:.3f}%, CRA: {100 * test_cra:.3f}%\n")
         print("")

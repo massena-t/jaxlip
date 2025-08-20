@@ -23,7 +23,9 @@ class BatchCentering(nnx.Module):
     ):
         feature_shape = (num_features,)
         # running mean state
-        self.mean = nnx.BatchStat(jnp.zeros(feature_shape, jnp.float32))
+        self.mean = nnx.BatchStat(
+            jnp.zeros(feature_shape, jnp.float32), collection="batch_stats"
+        )
         # bias parameter
         self.bias = nnx.Param(jnp.zeros(feature_shape, jnp.float32))
         self.use_running_average = use_running_average
@@ -43,7 +45,7 @@ class BatchCentering(nnx.Module):
         reduction_axes = tuple(i for i in range(x.ndim) if i not in feature_axes)
 
         if self.use_running_average:
-            mean = self.mean
+            mean = self.mean.value
         else:
             curr_mean = jnp.mean(x, axis=reduction_axes)
             self.mean.value = (

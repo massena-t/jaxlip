@@ -9,7 +9,7 @@ def is_verbose():
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 
 import unittest
-from jaxlip.linear import SpectralLinear, OrthoLinear, l2_normalize
+from jaxlip.linear import SpectralLinear, OrthoLinear, ParametrizedLinear, l2_normalize
 from jaxlip.newton_schulz import orthogonalize
 import jax
 from jax.numpy.linalg import norm
@@ -153,11 +153,11 @@ class TestAttack(unittest.TestCase):
 
             def loss_fn(p):
                 out = lin_layer(origin + p)
-                return jnp.linalg.norm(out - ref, ord=2)
+                return jnp.linalg.norm(out - ref, ord=2) / jnp.linalg.norm(p, ord=2)
 
             out = lin_layer(origin + pert)
             grad = jax.grad(loss_fn)(pert)  # same shape as pert: [1,H,W,C]
-            pert = pert - 1e-2 * grad
+            pert = pert + 1e-3 * grad / jnp.linalg.norm(grad, ord=2)
             assert norm(grad, ord=2) > 0
             lip_estimate = loss_fn(pert) / jnp.linalg.norm(origin - pert, ord=2)
 
@@ -169,5 +169,21 @@ class TestAttack(unittest.TestCase):
         self.assertTrue(all(validity))
 
 
-if __name__ == "main":
+class TestParametrizedLayer(unittest.TestCase):
+    def test_instance(self):
+        key = jax.random.key(2025)
+        rng = nnx.Rngs(params=key)
+        spectral = ParametrizedLinear(
+            din=5, dout=10, bias=False, parametrization="spectral", rngs=rng
+        )
+        ortho = ParametrizedLinear(
+            din=5, dout=10, bias=False, parametrization="ortho", rngs=rng
+        )
+
+        w = jax.random.uniform(key, (5, 10))
+        self.assertTrue((spectral.get_weights(w) == l2_normalize(w)).all())
+        self.assertTrue((ortho.get_weights(w) == orthogonalize(w)).all())
+
+
+if __name__ == "__main__":
     unittest.main()

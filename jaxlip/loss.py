@@ -9,13 +9,13 @@ import optax
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 from flax import nnx
+from flax import struct
 
 
 Reduction = Literal["none", "mean", "sum", "auto"]
 
 
-@dataclass
-class LseHKRMulticlassLoss:
+class LseHKRMulticlassLoss(nnx.Module):
     """JAX / Flax implementation of the LSE-HKR multiclass loss.
 
     Args
@@ -27,11 +27,19 @@ class LseHKRMulticlassLoss:
     reduction:    'none' | 'mean' | 'sum' | 'auto'  (auto == mean).
     """
 
-    alpha: float = 1.0
-    temperature: float = 1.0
-    penalty: float = 1.0
-    min_margin: float = 1.0
-    reduction: Reduction = "mean"
+    def __init__(
+        self,
+        alpha: float = 1.0,
+        temperature: float = 1.0,
+        penalty: float = 1.0,
+        min_margin: float = 1.0,
+        reduction: Reduction = "mean",
+    ):
+        self.alpha = alpha
+        self.temperature = temperature
+        self.penalty = penalty
+        self.min_margin = min_margin
+        self.reduction = reduction
 
     def __call__(self, logits: jnp.ndarray, targets: jnp.ndarray) -> jnp.ndarray:
         """
