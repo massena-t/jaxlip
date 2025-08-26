@@ -1,6 +1,6 @@
 # JaxLip: Lipschitz Neural Networks in JAX
 
-**Disclaimer:** This framework is still undergoing activate development and some errors might be present.
+**Disclaimer:** This framework is still undergoing active development and some errors might be present.
 
 A JAX implementation of Lipschitz-constrained neural networks using Flax NNX. This library provides layers and models that maintain Lipschitz continuity, which is useful for robust deep learning applications.
 
