@@ -101,7 +101,7 @@ def get_datasets(bs):
 def main(args):
     rng = nnx.Rngs(params=jax.random.key(0))
     model = get_model(rng, args, dataset="cifar10")
-    optimizer = nnx.Optimizer(model, optax.adamw(args.lr))
+    optimizer = nnx.ModelAndOptimizer(model, optax.adamw(args.lr))
 
     params = nnx.state(model, nnx.Param)
     total_params = (

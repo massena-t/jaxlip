@@ -8,11 +8,13 @@ import jax
 import jax.numpy as jnp
 import optax
 import tensorflow as tf
+
+tf.config.set_visible_devices([], "GPU")  # <-- keep TF on CPU for tfds
+
 import tensorflow_datasets as tfds
 from flax import nnx
 from models.mixer import MLPMixer
 import numpy as np
-import albumentations as A
 import cv2
 
 from jaxlip.utils import cache_model_params, uncache_model_params
@@ -128,7 +130,7 @@ def main(args):
     from jaxlip.trainer import Trainer
 
     if not args.vmap_reparams:
-        optimizer = nnx.Optimizer(model, optax.adam(args.lr))
+        optimizer = nnx.ModelAndOptimizer(model, optax.adam(args.lr))
     else:
         optimizer = optax.adam(args.lr)
 
