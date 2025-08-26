@@ -108,7 +108,6 @@ def tensor_norm(
             u1 = jax.lax.stop_gradient(u1)
             u2 = jax.lax.stop_gradient(u2)
             u3 = jax.lax.stop_gradient(u3)
-            u4 = jax.lax.stop_gradient(u4)
 
         # update u4
         tmp = K * u1

@@ -46,7 +46,9 @@ def orthogonalize(M):
     transpose = M.shape[1] > M.shape[0]
     if transpose:
         M = M.T
+
     M = M / jnp.linalg.norm(M)
+
     for a, b, c in abc_list:
         A = M.T @ M
         I = jnp.eye(A.shape[0])
